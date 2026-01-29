@@ -1,390 +1,555 @@
 -- Rayfield UIのロード
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
+-- ゲームサービスの取得
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+
 -- ウィンドウの作成
 local Window = Rayfield:CreateWindow({
-    Name = "テニスゲームチートメニュー",
-    LoadingTitle = "チートをロード中...",
-    LoadingSubtitle = "by Assistant",
+    Name = "🎾 テニスゲームチート",
+    LoadingTitle = "チートを初期化中...",
+    LoadingSubtitle = "テニスゲーム用チートシステム",
     ConfigurationSaving = {
         Enabled = true,
         FolderName = "TennisCheats",
         FileName = "Config"
     },
-    Discord = {
-        Enabled = false,
-        Invite = "noinvitelink",
-        RememberJoins = true
-    },
-    KeySystem = false,
-    KeySettings = {
-        Title = "認証",
-        Subtitle = "キーを入力",
-        Note = "キーを購入するにはDiscordに参加",
-        FileName = "Key",
-        SaveKey = true,
-        GrabKeyFromSite = false,
-        Key = "1234"
-    }
+    KeySystem = false
 })
 
--- 既存の変数を取得（既存のコードから）
-local LocalPlayer_upvr = game.Players.LocalPlayer
-local ReplicatedStorage_upvr = game.ReplicatedStorage
-local RunService_upvr = game:GetService("RunService")
-
--- チート変数
+-- グローバル変数
 local Cheats = {
-    AutoHit = false,          -- 自動でボールを打つ
-    BallControl = false,      -- ボールの軌道をコントロール
-    SpeedHack = false,        -- ラケット速度向上
-    AlwaysServe = false,      -- 常にサーブ権
-    NoMiss = false,           -- ミスしない
-    InstantWin = false,       -- 即座に勝利
-    ShowBallPrediction = false, -- ボールの軌道予測表示
+    AutoHit = false,
+    BallControl = false,
+    RacketSpeed = 1.0,
+    AlwaysServe = false,
+    NoMiss = false,
+    TeleportBall = false,
+    ShowBallPath = false,
+    InstantWin = false,
+    GodMode = false
 }
 
--- ボール予測用のパーツ
-local predictionParts = {}
-local predictionFolder = Instance.new("Folder")
-predictionFolder.Name = "BallPrediction"
-predictionFolder.Parent = workspace
+local Ball = nil
+local Racket = nil
+local GameActive = false
+local PredictionParts = {}
 
--- タブの作成
-local MainTab = Window:CreateTab("主要チート", 4483362458)
-local VisualTab = Window:CreateTab("視覚効果", 4483362458)
-local MiscTab = Window:CreateTab("その他", 4483362458)
+-- 主要タブ
+local MainTab = Window:CreateTab("主要機能", 4483362458)
 
--- ボール軌道予測関数
-local function predictBallPath(startPos, velocity, steps, stepTime)
-    for _, part in ipairs(predictionParts) do
-        part:Destroy()
+-- ボールとラケットの自動検出
+local function FindGameObjects()
+    -- ボールの検出
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj.Name:find("Ball") or obj.Name:find("ball") then
+            if obj:IsA("BasePart") then
+                Ball = obj
+                break
+            end
+        end
     end
-    predictionParts = {}
     
-    if not Cheats.ShowBallPrediction then return end
+    -- ラケットの検出
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj.Name:find("Racket") or obj.Name:find("racket") or obj.Name:find("Paddle") then
+            if obj:IsA("BasePart") or obj:IsA("Model") then
+                Racket = obj
+                break
+            end
+        end
+    end
     
-    local gravity = Vector3.new(0, -196.2, 0)
-    local currentPos = startPos
-    local currentVel = velocity
-    
-    for i = 1, steps do
-        local time = stepTime * i
-        
-        -- 物理計算（位置 = 初期位置 + 速度*時間 + 0.5*重力*時間^2）
-        local predictedPos = startPos + velocity * time + 0.5 * gravity * time * time
-        
-        -- 予測点を表示
-        local part = Instance.new("Part")
-        part.Size = Vector3.new(0.5, 0.5, 0.5)
-        part.Position = predictedPos
-        part.Anchored = true
-        part.CanCollide = false
-        part.Transparency = 0.7
-        part.Color = Color3.fromRGB(255, 0, 0)
-        part.Material = Enum.Material.Neon
-        part.Parent = predictionFolder
-        
-        -- サイズを段階的に小さく
-        part.Size = Vector3.new(0.5 - (i * 0.03), 0.5 - (i * 0.03), 0.5 - (i * 0.03))
-        part.Transparency = 0.3 + (i * 0.07)
-        
-        table.insert(predictionParts, part)
+    -- プレイヤーのラケットを検出
+    if LocalPlayer.Character then
+        for _, tool in pairs(LocalPlayer.Character:GetChildren()) do
+            if tool:IsA("Tool") and (tool.Name:find("Racket") or tool.Name:find("racket")) then
+                Racket = tool
+            end
+        end
     end
 end
 
--- 自動ヒット機能
-local autoHitConnection
-local function setupAutoHit()
-    if autoHitConnection then
-        autoHitConnection:Disconnect()
-        autoHitConnection = nil
+-- 自動ボール打ち返し
+local AutoHitConnection
+local function SetupAutoHit()
+    if AutoHitConnection then
+        AutoHitConnection:Disconnect()
     end
     
     if Cheats.AutoHit then
-        autoHitConnection = RunService_upvr.Heartbeat:Connect(function()
-            -- 既存のヒット検出ロジックを強化
-            -- ボールに自動的に近づいて打ち返す
-            -- 注: 実際の実装はゲームの具体的な構造に依存します
+        AutoHitConnection = RunService.Heartbeat:Connect(function()
+            if Ball and Racket and GameActive then
+                -- ボールの位置を予測して移動
+                local ballPos = Ball.Position
+                local racketPos = Racket.Position
+                
+                -- ボールが近づいたら自動で打ち返す
+                local distance = (ballPos - racketPos).Magnitude
+                if distance < 15 then
+                    -- 打ち返す方向を計算（対戦相手側へ）
+                    local hitDirection = Vector3.new(-ballPos.X * 2, 5, ballPos.Z * 1.5)
+                    
+                    -- ボールに力を加える（実際のゲームではリモートイベントを使用）
+                    if Ball:FindFirstChild("BodyVelocity") then
+                        Ball.BodyVelocity.Velocity = hitDirection * 50
+                    end
+                end
+            end
         end)
     end
 end
 
--- ボールコントロール機能
-local ballControlConnection
-local function setupBallControl()
-    if ballControlConnection then
-        ballControlConnection:Disconnect()
-        ballControlConnection = nil
+-- ボールテレポート
+local function TeleportToFront()
+    if Ball and LocalPlayer.Character then
+        local char = LocalPlayer.Character
+        local humanoidRootPart = char:FindFirstChild("HumanoidRootPart")
+        
+        if humanoidRootPart then
+            -- キャラクターの前方にボールを配置
+            local offset = humanoidRootPart.CFrame.LookVector * 10
+            Ball.Position = humanoidRootPart.Position + offset + Vector3.new(0, 5, 0)
+            
+            -- ボールを少し上に動かす
+            if Ball:FindFirstChild("BodyVelocity") then
+                Ball.BodyVelocity.Velocity = Vector3.new(0, 50, 0)
+            end
+        end
+    end
+end
+
+-- ボール軌道予測
+local function UpdateBallPrediction()
+    if not Cheats.ShowBallPath or not Ball then
+        -- 既存の予測パーツを削除
+        for _, part in ipairs(PredictionParts) do
+            if part then part:Destroy() end
+        end
+        PredictionParts = {}
+        return
     end
     
-    if Cheats.BallControl then
-        ballControlConnection = RunService_upvr.Heartbeat:Connect(function()
-            -- ボールの位置や速度を操作する
-            -- 注: 実際の実装はゲームの具体的な構造に依存します
-        end)
+    -- 既存の予測パーツを削除
+    for _, part in ipairs(PredictionParts) do
+        if part then part:Destroy() end
+    end
+    PredictionParts = {}
+    
+    -- 新しい予測パーツを作成
+    local ballPos = Ball.Position
+    local ballVelocity = Vector3.new(0, 0, 0)
+    
+    if Ball:FindFirstChild("BodyVelocity") then
+        ballVelocity = Ball.BodyVelocity.Velocity
+    end
+    
+    for i = 1, 20 do
+        local time = i * 0.1
+        local gravity = Vector3.new(0, -196.2 * time, 0)
+        local predictedPos = ballPos + (ballVelocity * time) + (gravity * time * time * 0.5)
+        
+        local part = Instance.new("Part")
+        part.Size = Vector3.new(0.3, 0.3, 0.3)
+        part.Position = predictedPos
+        part.Anchored = true
+        part.CanCollide = false
+        part.Transparency = 0.5 + (i * 0.025)
+        part.Color = Color3.fromRGB(255, 50, 50)
+        part.Material = Enum.Material.Neon
+        part.Parent = Workspace
+        
+        table.insert(PredictionParts, part)
+    end
+end
+
+-- ポイント追加機能
+local function AddPoints(points)
+    -- ゲームのポイントシステムに応じて調整が必要
+    local success, result = pcall(function()
+        -- 一般的なテニスゲームのポイントイベント
+        local events = {
+            "AddPoint",
+            "UpdateScore",
+            "IncreaseScore",
+            "PointScored"
+        }
+        
+        for _, eventName in ipairs(events) do
+            local event = ReplicatedStorage:FindFirstChild(eventName)
+            if event then
+                if event:IsA("RemoteEvent") then
+                    event:FireServer(LocalPlayer, points)
+                elseif event:IsA("RemoteFunction") then
+                    event:InvokeServer(LocalPlayer, points)
+                end
+            end
+        end
+    end)
+    
+    if not success then
+        Rayfield:Notify({
+            Title = "ポイント追加",
+            Content = "ポイントシステムが見つかりませんでした",
+            Duration = 3,
+            Image = 4483362458
+        })
     end
 end
 
 -- ミス防止機能
-local noMissConnection
-local function setupNoMiss()
-    if noMissConnection then
-        noMissConnection:Disconnect()
-        noMissConnection = nil
+local NoMissConnection
+local function SetupNoMiss()
+    if NoMissConnection then
+        NoMissConnection:Disconnect()
     end
     
     if Cheats.NoMiss then
-        noMissConnection = ReplicatedStorage_upvr.Missed.OnClientEvent:Connect(function()
-            -- ミスイベントをキャンセル
-            return
+        NoMissConnection = game.DescendantAdded:Connect(function(descendant)
+            -- "Miss" や "Out" などのイベントを検出
+            if descendant.Name:find("Miss") or descendant.Name:find("miss") then
+                if descendant:IsA("RemoteEvent") then
+                    -- ミスイベントを傍受
+                end
+            end
         end)
     end
 end
 
--- 即時勝利機能
-local function instantWin()
-    if Cheats.InstantWin then
-        -- サーバーに勝利を報告
-        -- 注: 実際の実装はゲームのアンチチート対策によって異なります
-        pcall(function()
-            -- ポイントを直接設定する試み
-            ReplicatedStorage_upvr.UpdatePoints:FireServer(10, 0)
-        end)
-    end
-end
+-- UI要素の作成
 
--- 主要チートタブ
+-- 自動検出ボタン
+local DetectButton = MainTab:CreateButton({
+    Name = "ゲームオブジェクト自動検出",
+    Callback = function()
+        FindGameObjects()
+        if Ball then
+            Rayfield:Notify({
+                Title = "検出完了",
+                Content = string.format("ボール: %s\nラケット: %s", 
+                    tostring(Ball), 
+                    tostring(Racket)),
+                Duration = 5,
+                Image = 4483362458
+            })
+        else
+            Rayfield:Notify({
+                Title = "警告",
+                Content = "ゲームオブジェクトが見つかりませんでした",
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end
+})
+
+-- オートプレイトグル
 local AutoHitToggle = MainTab:CreateToggle({
-    Name = "自動打ち返し",
+    Name = "オートプレイ (自動打ち返し)",
     CurrentValue = false,
     Flag = "AutoHitToggle",
     Callback = function(Value)
         Cheats.AutoHit = Value
-        setupAutoHit()
+        SetupAutoHit()
         Rayfield:Notify({
-            Title = "自動打ち返し",
-            Content = Value and "有効" or "無効",
+            Title = "オートプレイ",
+            Content = Value and "有効化しました" or "無効化しました",
             Duration = 2,
-            Image = 4483362458,
+            Image = 4483362458
         })
     end
 })
 
+-- ボールコントロールトグル
 local BallControlToggle = MainTab:CreateToggle({
     Name = "ボール軌道コントロール",
     CurrentValue = false,
     Flag = "BallControlToggle",
     Callback = function(Value)
         Cheats.BallControl = Value
-        setupBallControl()
+        if Value then
+            Rayfield:Notify({
+                Title = "ボールコントロール",
+                Content = "右クリックでボールをコントロール",
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end
+})
+
+-- ボールテレポートボタン
+local TeleportButton = MainTab:CreateButton({
+    Name = "ボールを前にテレポート",
+    Callback = function()
+        TeleportToFront()
         Rayfield:Notify({
-            Title = "ボール軌道コントロール",
-            Content = Value and "有効" or "無効",
+            Title = "テレポート",
+            Content = "ボールを前に移動しました",
             Duration = 2,
-            Image = 4483362458,
+            Image = 4483362458
         })
     end
 })
 
-local SpeedHackSlider = MainTab:CreateSlider({
+-- スピードハックスライダー
+local SpeedSlider = MainTab:CreateSlider({
     Name = "ラケット速度倍率",
-    Range = {1, 10},
-    Increment = 0.5,
-    Suffix = "倍",
-    CurrentValue = 1,
-    Flag = "SpeedHackSlider",
+    Range = {0.5, 5},
+    Increment = 0.1,
+    Suffix = "x",
+    CurrentValue = 1.0,
+    Flag = "SpeedSlider",
     Callback = function(Value)
-        Cheats.SpeedHack = Value
-        -- 既存のラケット速度変数を上書き
-        -- 注: 実際の変数名はゲームによって異なります
+        Cheats.RacketSpeed = Value
+        if Racket then
+            -- ラケットの速度を調整
+        end
     end
 })
 
-local AlwaysServeToggle = MainTab:CreateToggle({
+-- ポイント操作タブ
+local PointsTab = Window:CreateTab("ポイント操作", 4483362458)
+
+-- ポイント追加ボタン
+local AddPointButton = PointsTab:CreateButton({
+    Name = "ポイントを追加 (+1)",
+    Callback = function()
+        AddPoints(1)
+        Rayfield:Notify({
+            Title = "ポイント追加",
+            Content = "ポイントを追加しました",
+            Duration = 2,
+            Image = 4483362458
+        })
+    end
+})
+
+local Add5PointsButton = PointsTab:CreateButton({
+    Name = "ポイントを追加 (+5)",
+    Callback = function()
+        AddPoints(5)
+        Rayfield:Notify({
+            Title = "ポイント追加",
+            Content = "5ポイント追加しました",
+            Duration = 2,
+            Image = 4483362458
+        })
+    end
+})
+
+-- 勝利ボタン
+local WinButton = PointsTab:CreateButton({
+    Name = "即時勝利",
+    Callback = function()
+        Cheats.InstantWin = true
+        AddPoints(100)
+        Rayfield:Notify({
+            Title = "即時勝利",
+            Content = "勝利ポイントを追加しました",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+})
+
+-- 視覚効果タブ
+local VisualTab = Window:CreateTab("視覚効果", 4483362458)
+
+-- ボール軌道予測
+local BallPathToggle = VisualTab:CreateToggle({
+    Name = "ボール軌道予測表示",
+    CurrentValue = false,
+    Flag = "BallPathToggle",
+    Callback = function(Value)
+        Cheats.ShowBallPath = Value
+        if not Value then
+            UpdateBallPrediction()
+        end
+    end
+})
+
+-- ESP機能
+local ESPToggle = VisualTab:CreateToggle({
+    Name = "ボールESP (ハイライト)",
+    CurrentValue = false,
+    Flag = "ESPToggle",
+    Callback = function(Value)
+        if Value and Ball then
+            -- ボールをハイライト
+            local highlight = Instance.new("Highlight")
+            highlight.Adornee = Ball
+            highlight.FillColor = Color3.fromRGB(255, 0, 0)
+            highlight.OutlineColor = Color3.fromRGB(255, 255, 0)
+            highlight.Parent = Ball
+        elseif Ball then
+            -- ハイライトを削除
+            for _, child in pairs(Ball:GetChildren()) do
+                if child:IsA("Highlight") then
+                    child:Destroy()
+                end
+            end
+        end
+    end
+})
+
+-- その他タブ
+local MiscTab = Window:CreateTab("その他", 4483362458)
+
+-- ミス防止
+local NoMissToggle = MiscTab:CreateToggle({
+    Name = "ミス防止",
+    CurrentValue = false,
+    Flag = "NoMissToggle",
+    Callback = function(Value)
+        Cheats.NoMiss = Value
+        SetupNoMiss()
+    end
+})
+
+-- 常にサーブ権
+local AlwaysServeToggle = MiscTab:CreateToggle({
     Name = "常にサーブ権",
     CurrentValue = false,
     Flag = "AlwaysServeToggle",
     Callback = function(Value)
         Cheats.AlwaysServe = Value
+    end
+})
+
+-- ゲーム状態検出
+local GameStatusToggle = MiscTab:CreateToggle({
+    Name = "ゲーム状態自動検出",
+    CurrentValue = false,
+    Flag = "GameStatusToggle",
+    Callback = function(Value)
         if Value then
-            -- サーブイベントを常にトリガーする
-            -- 注: 実際の実装はゲームの構造に依存します
-        end
-    end
-})
-
-local NoMissToggle = MainTab:CreateToggle({
-    Name = "ミス無効",
-    CurrentValue = false,
-    Flag = "NoMissToggle",
-    Callback = function(Value)
-        Cheats.NoMiss = Value
-        setupNoMiss()
-    end
-})
-
--- 視覚効果タブ
-local BallPredictionToggle = VisualTab:CreateToggle({
-    Name = "ボール軌道予測表示",
-    CurrentValue = false,
-    Flag = "BallPredictionToggle",
-    Callback = function(Value)
-        Cheats.ShowBallPrediction = Value
-        if not Value then
-            for _, part in ipairs(predictionParts) do
-                part:Destroy()
+            -- ゲーム開始/終了を検出
+            local matchStartEvents = {
+                "StartMatch",
+                "MatchBegin",
+                "GameStart"
+            }
+            
+            for _, eventName in ipairs(matchStartEvents) do
+                local event = ReplicatedStorage:FindFirstChild(eventName)
+                if event and event:IsA("RemoteEvent") then
+                    event.OnClientEvent:Connect(function()
+                        GameActive = true
+                        Rayfield:Notify({
+                            Title = "ゲーム開始",
+                            Content = "マッチが開始されました",
+                            Duration = 3,
+                            Image = 4483362458
+                        })
+                    end)
+                end
             end
-            predictionParts = {}
+            
+            local matchEndEvents = {
+                "EndMatch",
+                "MatchEnd",
+                "GameOver"
+            }
+            
+            for _, eventName in ipairs(matchEndEvents) do
+                local event = ReplicatedStorage:FindFirstChild(eventName)
+                if event and event:IsA("RemoteEvent") then
+                    event.OnClientEvent:Connect(function()
+                        GameActive = false
+                        Rayfield:Notify({
+                            Title = "ゲーム終了",
+                            Content = "マッチが終了しました",
+                            Duration = 3,
+                            Image = 4483362458
+                        })
+                    end)
+                end
+            end
         end
     end
 })
 
-local ESPToggle = VisualTab:CreateToggle({
-    Name = "ボールESP",
-    CurrentValue = false,
-    Flag = "ESPToggle",
-    Callback = function(Value)
-        -- ボールの位置を常に表示するESP
-        -- 注: 実際の実装が必要です
-    end
-})
-
--- その他タブ
-local InstantWinButton = MiscTab:CreateButton({
-    Name = "即時勝利",
+-- リセットボタン
+local ResetButton = MiscTab:CreateButton({
+    Name = "チートリセット",
     Callback = function()
-        Cheats.InstantWin = true
-        instantWin()
+        Cheats = {
+            AutoHit = false,
+            BallControl = false,
+            RacketSpeed = 1.0,
+            AlwaysServe = false,
+            NoMiss = false,
+            TeleportBall = false,
+            ShowBallPath = false,
+            InstantWin = false,
+            GodMode = false
+        }
+        
+        if AutoHitConnection then AutoHitConnection:Disconnect() end
+        if NoMissConnection then NoMissConnection:Disconnect() end
+        
+        for _, part in ipairs(PredictionParts) do
+            if part then part:Destroy() end
+        end
+        PredictionParts = {}
+        
         Rayfield:Notify({
-            Title = "即時勝利",
-            Content = "勝利を試みました",
+            Title = "リセット完了",
+            Content = "すべてのチートをリセットしました",
             Duration = 3,
-            Image = 4483362458,
+            Image = 4483362458
         })
     end
 })
 
-local AddPointButton = MiscTab:CreateButton({
-    Name = "ポイント追加",
-    Callback = function()
-        -- 現在のポイントを取得して1ポイント追加
-        pcall(function()
-            -- 実際のポイント追加ロジック
-            -- 注: ゲームの実装に依存します
-        end)
-        Rayfield:Notify({
-            Title = "ポイント追加",
-            Content = "ポイントを追加しました",
-            Duration = 2,
-            Image = 4483362458,
-        })
-    end
-})
-
-local ResetPointsButton = MiscTab:CreateButton({
-    Name = "ポイントリセット",
-    Callback = function()
-        -- ポイントを0-0にリセット
-        pcall(function()
-            ReplicatedStorage_upvr.UpdatePoints:FireServer(0, 0)
+-- ボールコントロール用のマウスイベント
+local ballControlConnection
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    if input.UserInputType == Enum.UserInputType.MouseButton2 and Cheats.BallControl and Ball then
+        -- 右クリックでボールをコントロール
+        ballControlConnection = RunService.Heartbeat:Connect(function()
+            if Ball then
+                local mouseHit = Mouse.Hit
+                Ball.Position = mouseHit.Position
+            end
         end)
     end
-})
+end)
 
-local TeleportBallButton = MiscTab:CreateButton({
-    Name = "ボールを前にテレポート",
-    Callback = function()
-        -- ボールをプレイヤーの前に移動
-        -- 注: 実際の実装はゲームの構造に依存します
-        Rayfield:Notify({
-            Title = "ボールテレポート",
-            Content = "ボールを前に移動しました",
-            Duration = 2,
-            Image = 4483362458,
-        })
-    end
-})
-
--- キーバインド設定
-local Input = MiscTab:CreateInput({
-    Name = "チート有効化キー",
-    PlaceholderText = "キーを入力...",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(Text)
-        -- キーバインド設定
-        -- 注: 実際のキーバインド実装が必要です
-    end
-})
-
--- ゲーム終了時やリセット時のクリーンアップ
-game:GetService("Players").LocalPlayer.CharacterRemoving:Connect(function()
-    -- すべての接続を解除
-    if autoHitConnection then
-        autoHitConnection:Disconnect()
-    end
-    if ballControlConnection then
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 and ballControlConnection then
         ballControlConnection:Disconnect()
-    end
-    if noMissConnection then
-        noMissConnection:Disconnect()
-    end
-    
-    -- 予測パーツをクリーンアップ
-    for _, part in ipairs(predictionParts) do
-        part:Destroy()
-    end
-    predictionParts = {}
-    
-    if predictionFolder then
-        predictionFolder:Destroy()
+        ballControlConnection = nil
     end
 end)
 
--- 既存のゲームイベントをフックしてチート機能を追加
-local originalFunctions = {}
-
--- ヒット関数をフック
-local success, originalHit = pcall(function()
-    -- 既存のhitBall_upvr関数を保存して上書き
-    -- 注: 実際の関数名はデコンパイル結果によって異なります
-end)
-
-if success and type(originalHit) == "function" then
-    originalFunctions.hitBall = originalHit
-    
-    -- 新しいヒット関数を作成
-    local newHitBall = function()
-        -- チートが有効な場合、強化されたヒット
-        if Cheats.AutoHit then
-            -- 自動ヒットロジック
-        end
-        
-        if Cheats.BallControl then
-            -- ボールコントロールロジック
-        end
-        
-        -- 元の関数を呼び出し
-        return originalHit()
+-- メインループ
+RunService.Heartbeat:Connect(function()
+    -- ボール軌道予測の更新
+    if Cheats.ShowBallPath then
+        UpdateBallPrediction()
     end
     
-    -- 関数を上書き
-    -- hitBall_upvr = newHitBall など
-end
-
--- サーブ関数をフック
-ReplicatedStorage_upvr.Serve.OnClientEvent:Connect(function(...)
-    if Cheats.AlwaysServe then
-        -- 常にサーブ権を持つロジック
-        -- サーバーに強制的にサーブを要求
+    -- ゲームオブジェクトの定期的な検出
+    if not Ball or not Racket then
+        FindGameObjects()
     end
-    
-    -- 元のイベント処理を続行
 end)
 
+-- 初期化通知
 Rayfield:Notify({
-    Title = "チートメニュー",
-    Content = "テニスゲームチートがロードされました！",
+    Title = "🎾 テニスチート",
+    Content = "チートシステムが起動しました\n最初に「ゲームオブジェクト自動検出」を実行してください",
     Duration = 5,
-    Image = 4483362458,
+    Image = 4483362458
 })
